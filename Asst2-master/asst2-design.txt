@@ -1,0 +1,97 @@
+1. What significant data structures have you added and what function do they perform?
+
+    We defined two Tables for the data structure, the Global Open File table and the Per Process File Descriptor Tables.
+    
+    open_file data struct:
+    (int refCount): The value representing the number of references to open files is in each process file descriptor table.
+    (int flags): a flag to open file(e.g. O_RDONLY, O_WRONLY).
+    (off_t offset): The byte offset to operate on an open file.
+    (struct vnode *vn_ptr;): Pointer to the vnode where the file was opened.
+    (struct lock *oft_lock;): a lock on open file for no race condition occurs.
+
+    Per Process File Descriptor Table:
+    (int *fd_table)
+    For each procedure(proc.c/proc.h), we have an fd table that stores a number and uses that number to access the open_file table.
+
+    creat_table():
+    Initialize the data and set stdin, stdout, and stderr to the open file table. Assign 0,1,2 to each process fd table.
+    Creating lock("oft_lock") to maintenance criticl section.
+    destroy_open_file():
+    destroy openfile table and lock.
+
+    int valid_fd_fp():
+    check if fd and fpt(open file table's file pointer) is valid.
+
+    sys.open():
+    Using kmalloc to assign a new filename and when filename recieved, use copyinstr to safely retrieve the file name from the user pointer.
+    We need to release the lock before releasing the new filename.
+    Get the new fd from the fd table, get the new file pointer (fpt) from the open_file table, and set fpt to fd.
+    Using vfs_open to open the file and set the vnode in the open_file table to the vnode returned by vfs_open.
+    Then, setting ref count to 1 and offset to 0. retval is fd.
+
+    sys_close():
+    Then check the validity of fd and fpt by calling valid_fd_fp().
+    If the value of the reference counter is greater than 1, then decrementing the reference counter and then cancel the fd assignment.
+    If the value of the reference counter is 0, call vfs_close to shut down vnode and set vnode = NULL, fd to -1.
+    We need to acquire a lock before updating offset and then release the lock before return 0;
+
+    sys_write():
+    Then check the validity of fd and fpt by calling valid_fd_fp(). then check if flag is valid.
+    After initializing a uio using uio_kinit, then call the VOP_WRITE(vnode,uio) to write to the file.
+    We need to acquire a lock before updating offset and then release the lock before return 0;
+    At last, we need to update the oft->offset and return the retval of the number of bytes it written.
+
+    sys_read():
+    We need to acquire the lock first.
+    Then check the validity of fd and fpt by calling valid_fd_fp(). Next, we need to check whether the flag is valid. Then reads the file on the global table
+    which the given fd points to using VOP_READ and uio framework which uses function uio_uinit to initialize.
+    Finally, we need to update the oft->offset, release the lock and return the retval of the number of bytes it read.
+
+    sys_dup2():
+    Firstly, we check whether oldfd and newfd are valid(greater than 0 and less than the OPEN_MAX). Then, we check whether the old file and the new file are open and valid.
+    After that, we acquire the lock and copies the pointer to the global table of oldfd to newfd and increment the refCounter to the index which oldfd points to global table.If 
+    oldfd is equal to newfd, we do nothing, just return 0.
+    
+    sys_lseek():
+    Firstly, we check the validity of fd and fpt.Then we acquire the lock and check if this file is seekable. 
+    Next, we update the offset on the global table which the fd points to according to the given whence.If it succeeded, return 0.
+    Return any corresponding error if there is something wrong.
+   
+
+2. What are any significant issues surround managing the data structures and state do they contain?
+    
+    First, we check that the openfile global table and the per process table are all uniformly initialized before being accessed by the process. 
+    This state indicates that no new entries are detected when the system calls them. 
+    This makes it easier to store data when a new process accesses it.
+    
+    Secondly, make sure that the offset in openfile is always updated when we read and write files, 
+    in case there may be misreads or overwrites or unoverwrites.
+
+    Thirdly, we need to lock the openfile table, in order to avoid the multi-process race condition.
+    In addition, because fdtable is maintained by each process, there is no problem of processes accessing a fdtable simultaneously. 
+    However, when multiple threads and concurrency problems occur and fdtable is accessed simultaneously, we also need to consider locking fd_table.
+
+3. What data structures are per-process and what structures are shared between processes?
+    As in the second question, the process file descriptor table is maintained by each process. 
+    The openfile table data is shared between processes.
+
+4. What is the main issues related to transferring data to and from applications?
+    The main issues related to transferring data is that the wrong varible type of arguments which sent to the system call, in order to 
+    call the system call and correctly store data in register, we need to type-casting the arguments, such as (sys_read((int) tf->tf_a0, (void *) tf->tf_a1, (size_t) tf->tf_a2, &retval);).
+   
+
+
+5.If fork() was implemented, what concurrency issues would be introduced to your implementation?
+    If fork() was implemented, we will face a race condition because fork will create some addition child process and those process
+    will access the same file and data simultaneously. for examle, two process may call sys_write simultaneously, this may
+    cause overwriting of data, which lead to file and system chaos.
+
+
+
+
+
+
+
+
+
+
